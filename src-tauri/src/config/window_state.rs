@@ -1,7 +1,7 @@
 //! 主窗口几何持久化：记住窗口大小/位置/最大化状态，重启后恢复。
 //!
 //! 为什么不直接用官方的 tauri-plugin-window-state：本项目主窗口是程序化创建
-//! （见 `desktop::builder::build_main_window`）、无标题栏 `decorations(false)`，
+//! （见 `desktop::builder::build_main_window`）、自定义壳层标题栏（macOS 上保留原生交通灯），
 //! 且关闭时是「隐藏到托盘」而非销毁（见 builder 的 on_window_event），并叠加
 //! release 的单例复用（二次启动 show/focus 同一窗口）。插件默认把状态写进独立的
 //! 配置文件、恢复时机与这套「隐藏 + 单例」流程存在耦合，且与本项目「所有应用数据
@@ -86,6 +86,12 @@ fn save_window_state<R: Runtime>(app_handle: &AppHandle<R>, state: &WindowState)
 
 /// 采样当前窗口并保存（主窗口移动/缩放时由 builder 调用）。
 pub fn save_geometry<R: Runtime>(window: &Window<R>) {
+    // 原生全屏切换会触发 Resized，但此时的屏幕尺寸不是可恢复的
+    // 普通窗口几何；保留进入全屏前的最后一帧，退出全屏后会再次正常采样。
+    if window.is_fullscreen().unwrap_or(false) {
+        return;
+    }
+
     let pos = window.outer_position().ok();
     let size = window.outer_size().ok();
     let state = WindowState {

@@ -50,6 +50,14 @@ pub fn t(key: &str) -> String {
         "install.extracting" => ("正在解压", "Extracting"),
         "install.downloaded" => ("已下载", "Downloaded"),
         "install.done" => ("依赖已安装完毕", "Dependencies installed"),
+        "menu.application" => ("应用", "Application"),
+        "menu.help" => ("帮助", "Help"),
+        "menu.settings" => ("设置…", "Settings…"),
+        "menu.enter_fullscreen" => ("进入全屏幕", "Enter Full Screen"),
+        "menu.exit_fullscreen" => ("退出全屏幕", "Exit Full Screen"),
+        "menu.about" => ("关于 Desktop", "About Desktop"),
+        "menu.run_logs" => ("运行日志", "Run Logs"),
+        "menu.check_update" => ("检查更新", "Check for Updates"),
         _ => (key, key),
     };
     match lang() {

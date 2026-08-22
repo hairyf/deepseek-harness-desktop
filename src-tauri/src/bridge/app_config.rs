@@ -61,6 +61,10 @@ pub fn set_language(app_handle: AppHandle, lang: String) {
         "en" | "en-US" => config::i18n::Lang::En,
         _ => config::i18n::Lang::Zh,
     });
+    #[cfg(target_os = "macos")]
+    if let Err(error) = crate::desktop::builder::install_macos_menu(&app_handle) {
+        log::warn!("[menu] failed to refresh macOS menu language: {error}");
+    }
 }
 
 /// 切换侧边栏（布局状态保存在前端，保留该命令以对齐参考实现）
