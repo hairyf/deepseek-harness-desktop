@@ -34,6 +34,7 @@
   "preinstall.cancelling": "Cancelling...",
   "preinstall.open_repo": "Open repository of {{name}}",
   "preinstall.failed": "Installation failed",
+  "preinstall.load_failed": "Failed to load preinstall plugin list",
   "preinstall.empty": "No preinstalled plugins available.",
   "preinstall.settings_title": "Recommended Plugins",
   "preinstall.settings_hint": "Reopen the preset wizard to re-select or install recommended plugins.",

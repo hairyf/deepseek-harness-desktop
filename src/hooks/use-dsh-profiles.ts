@@ -45,15 +45,20 @@ export function useDshProfiles(): UseDshProfilesResult {
 
   // 后端设置变更（切换档案等）后刷新档案列表
   useEffect(() => {
+    let disposed = false
     let unlisten: (() => void) | undefined
     listen('setting_updated', () => {
       void queryClient.invalidateQueries({ queryKey: ['profiles'] })
     })
       .then((fn) => {
-        unlisten = fn
+        // 竞态防护：若组件已卸载而 listen 才 resolve，立即注销防泄漏
+        if (disposed)
+          fn()
+        else unlisten = fn
       })
       .catch(() => {})
     return () => {
+      disposed = true
       unlisten?.()
     }
   }, [queryClient])

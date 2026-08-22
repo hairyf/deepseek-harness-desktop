@@ -34,6 +34,7 @@
   "preinstall.cancelling": "正在取消...",
   "preinstall.open_repo": "打开 {{name}} 的仓库",
   "preinstall.failed": "安装失败",
+  "preinstall.load_failed": "预装插件列表加载失败",
   "preinstall.empty": "暂无可预装的插件。",
   "preinstall.settings_title": "预装插件",
   "preinstall.settings_hint": "重新打开预设引导，可重新选择或安装推荐的插件。",

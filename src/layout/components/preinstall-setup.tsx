@@ -199,21 +199,43 @@ export function PreinstallSetup() {
                   {/* 插件列表 */}
                   <div className="space-y-3 flex-wrap gap-2">
                     <If
-                      cond={preinstall.plugins.length > 0}
+                      cond={preinstall.loadError === ''}
                       else={(
-                        <Empty>{t('preinstall.empty')}</Empty>
+                        // 列表加载失败（区别于空列表）：错误说明 + 重试
+                        <div className="flex flex-col items-center gap-2 rounded-md border border-danger/30 bg-danger/5 p-4 text-center">
+                          <p className="text-xs font-medium text-danger">{t('preinstall.load_failed')}</p>
+                          <p className="max-h-[80px] max-w-full overflow-y-auto break-all font-mono text-[11px] text-muted">
+                            {preinstall.loadError}
+                          </p>
+                          <Button
+                            className="h-8 rounded-md"
+                            size="sm"
+                            variant="primary"
+                            onPress={() => void store.harness.loadPreinstallPlugins()}
+                            isDisabled={preinstall.loading}
+                          >
+                            {t('app.retry')}
+                          </Button>
+                        </div>
                       )}
                     >
-                      {preinstall.plugins.map(plugin => (
-                        <PluginRow
-                          key={plugin.id}
-                          plugin={plugin}
-                          checked={effectiveSelected.has(plugin.id)}
-                          disabled={installing}
-                          onToggle={toggle}
-                          onOpenRepo={openRepo}
-                        />
-                      ))}
+                      <If
+                        cond={preinstall.plugins.length > 0}
+                        else={(
+                          <Empty>{t('preinstall.empty')}</Empty>
+                        )}
+                      >
+                        {preinstall.plugins.map(plugin => (
+                          <PluginRow
+                            key={plugin.id}
+                            plugin={plugin}
+                            checked={effectiveSelected.has(plugin.id)}
+                            disabled={installing}
+                            onToggle={toggle}
+                            onOpenRepo={openRepo}
+                          />
+                        ))}
+                      </If>
                     </If>
                   </div>
 

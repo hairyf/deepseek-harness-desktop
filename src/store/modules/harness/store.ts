@@ -171,7 +171,10 @@ export const harness = defineStore({
       /** 用户触发了“取消”但仍需等后端结束进程树 */
       cancelling: false,
       logs: [] as string[],
+      /** 安装失败错误（区别于下面列表加载失败） */
       error: '',
+      /** 拉取预装插件列表失败（区别于空列表；UI 据此展示错误态 + 重试） */
+      loadError: '',
     },
     serviceUrl: 'http://127.0.0.1:3080',
     /** 带时间戳的 iframe 地址（boot 时生成一次，避免缓存） */
@@ -553,9 +556,13 @@ export const harness = defineStore({
       this.preinstall.loading = true
       try {
         this.preinstall.plugins = await invoke<PreinstallPlugin[]>('get_preinstall_plugins')
+        // 成功加载后清除历史加载错误，避免残留错误态遮蔽新列表
+        this.preinstall.loadError = ''
       }
       catch (err) {
         console.error('[Harness] failed to load preinstall plugins:', err)
+        // 记录错误而非伪装空列表：UI 据此展示错误态与重试按钮
+        this.preinstall.loadError = String(err)
       }
       finally {
         this.preinstall.loading = false
@@ -607,16 +614,22 @@ export const harness = defineStore({
       // 后端结束进程树导致 `install_preinstall_plugins` 提前返回并进入 catch，
       // 通过 installing=false 让其回到列表态而不是报错态。
       this.preinstall.cancelling = true
+      // 一次性监听：先挂事件（拿到注销函数再 invoke），finally 里注销，
+      // 避免每次取消都永久注册一个 `preinstall-cancelled` 监听（泄漏）。
+      let unlisten: (() => void) | undefined
       try {
-        await invoke('cancel_preinstall_plugins')
-        await listen<unknown>('preinstall-cancelled', () => {
+        unlisten = await listen<unknown>('preinstall-cancelled', () => {
           this.preinstall.installing = false
           this.preinstall.cancelling = false
         })
+        await invoke('cancel_preinstall_plugins')
       }
       catch (err) {
         console.error('[Harness] cancel preinstall failed:', err)
         this.preinstall.cancelling = false
+      }
+      finally {
+        unlisten?.()
       }
     },
 

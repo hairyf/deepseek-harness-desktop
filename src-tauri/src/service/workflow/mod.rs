@@ -667,8 +667,12 @@ pub async fn launch(app_handle: tauri::AppHandle) -> Result<(), String> {
 pub async fn stop(app_handle: tauri::AppHandle) -> Result<(), String> {
     log::info!("Stopping Harness service...");
     // 重置启动守卫，确保后续 launch 可以重新拉起；仅结束持有的根进程树。
+    // 进程终止涉及 WaitForSingleObject（至多 5s）与 taskkill/kill 等同步阻塞
+    // 调用，移出 Tokio 执行线程避免卡住其他并发任务（WARN-7/P2-#20）。
     LAUNCH_GUARD.store(false, Ordering::SeqCst);
-    terminate_owned_process();
+    tauri::async_runtime::spawn_blocking(terminate_owned_process)
+        .await
+        .map_err(|e| format!("STOP_FAILED: {e}"))?;
     // 清理孤儿清扫标记：正常停止的实例不应被下次启动当作残留
     let _ = fs::remove_file(harness_pid_path(&app_handle));
 
@@ -713,7 +717,15 @@ pub async fn install(
     // （不在 .harness.pid 标记中）同样从 dependencies/dsh 启动、占用目录文件
     // 句柄，会导致更新切换目录失败（INSTALL_BACKUP_FAILED, os error 32）。
     // 按命令行路径精确清扫所有本应用 dsh 安装目录启动的进程。
-    terminate_stale_harness_processes(app_handle);
+    // 枚举/结束涉及 powershell 枚举与 taskkill（同步阻塞），移出 Tokio 线程。
+    {
+        let handle = app_handle.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            terminate_stale_harness_processes(&handle);
+        })
+        .await
+        .map_err(|e| format!("STOP_FAILED: {e}"))?;
+    }
 
     let window = app_handle
         .get_webview_window("main")

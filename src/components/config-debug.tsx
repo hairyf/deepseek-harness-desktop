@@ -40,21 +40,21 @@ export function ConfigDebug() {
   const { serviceRunning, busyAction, preinstall } = useStore(store.harness)
   const { updateInfo } = useStore(store.harnessUpdater)
 
-  const [port, setPort] = useState<number>(3080)
+  // 端口编辑态：用户尚未输入时为 undefined，由 `data?.port ?? 3080` 提供初值。
+  // 初值不写入 state（避免 queryFn 副作用 / effect 同步），渲染与保存时统一
+  // 读取 config 数据；用户一旦输入即以输入值为准。
+  const [portInput, setPortInput] = useState<number>()
 
   const { data: info } = useQuery({
     queryKey: ['info'],
     queryFn: () => invoke<RuntimeInfo>('get_runtime_info'),
   })
 
-  const { refetch: refreshConfig } = useQuery({
+  const { data: config, refetch: refreshConfig } = useQuery({
     queryKey: ['config'],
-    queryFn: async () => {
-      const config = await invoke<AppConfig>('get_app_config')
-      setPort(config.port)
-      return config
-    },
+    queryFn: () => invoke<AppConfig>('get_app_config'),
   })
+  const port = portInput ?? config?.port ?? 3080
 
   const { data: cliStatus, refetch: refreshCliStatus } = useQuery({
     queryKey: ['cli_status'],
@@ -73,12 +73,20 @@ export function ConfigDebug() {
       await refreshLogs()
       toast(t('messages.logs_cleared'))
     },
+    onError: (err: unknown) => {
+      console.error('[ConfigDebug] clear logs failed:', err)
+      toast(t('messages.logs_clear_failed'), { variant: 'danger' })
+    },
   })
 
   const { mutate: onToggleCliLink } = useMutation({
     mutationFn: async (enabled: boolean) => {
       await invoke<AppConfig>('update_app_config', { cliLinkEnabled: enabled })
       await refreshCliStatus()
+    },
+    onError: (err: unknown) => {
+      console.error('[ConfigDebug] toggle cli link failed:', err)
+      toast(t('messages.cli_link_failed'), { variant: 'danger' })
     },
   })
 
@@ -87,10 +95,18 @@ export function ConfigDebug() {
       await invoke('copy_service_url')
       toast(t('messages.copy_success'))
     },
+    onError: (err: unknown) => {
+      console.error('[ConfigDebug] copy url failed:', err)
+      toast(t('messages.copy_failed'), { variant: 'danger' })
+    },
   })
 
   const { mutate: onSavePort } = useMutation({
     mutationFn: async (port: number) => {
+      // 保存前校验：必须是 1–65535 的整数（输入框可能被清空成 0 / 浮点 / NaN）
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        throw new Error('PORT_INVALID')
+      }
       await invoke<AppConfig>('update_app_config', { port })
       await refreshConfig()
       const key = toast(t('messages.port_changed'), {
@@ -106,10 +122,23 @@ export function ConfigDebug() {
         },
       })
     },
+    onError: (err: unknown) => {
+      console.error('[ConfigDebug] save port failed:', err)
+      if (String(err).includes('PORT_INVALID')) {
+        toast(t('messages.port_invalid'), { variant: 'danger' })
+      }
+      else {
+        toast(t('messages.port_save_failed'), { variant: 'danger' })
+      }
+    },
   })
 
   const { mutate: onRevealDataDir } = useMutation({
     mutationFn: () => invoke('reveal_data_dir'),
+    onError: (err: unknown) => {
+      console.error('[ConfigDebug] reveal data dir failed:', err)
+      toast(t('messages.reveal_dir_failed'), { variant: 'danger' })
+    },
   })
 
   return (
@@ -267,7 +296,7 @@ export function ConfigDebug() {
               type="number"
               variant="secondary"
               value={String(port)}
-              onChange={e => setPort(Number(e.target.value))}
+              onChange={e => setPortInput(Number(e.target.value))}
               className="w-24 h-8 rounded-md [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               aria-label={t('ui.port')}
             />
