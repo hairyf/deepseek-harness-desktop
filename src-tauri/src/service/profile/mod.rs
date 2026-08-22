@@ -10,6 +10,7 @@
 //! 与 CLI 侧产物完全一致，两边可互相操作。
 
 use crate::config;
+use crate::service::fs_guard;
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -176,6 +177,9 @@ pub fn create(app_handle: &AppHandle, name: &str) -> Result<Profile, String> {
 
 /// 切换当前使用中的档案（持久化到桌面端 store）。
 pub fn set_active(app_handle: &AppHandle, id: &str) -> Result<Profile, String> {
+    // 路径安全：拒绝 `..`、绝对路径、分隔符（防御式——id 理论上来自
+    // normalize 产物，但 CLI/配置可能把任意字符串塞进设置）
+    fs_guard::validate_id(id)?;
     let dir = profile_dir_of(app_handle, id);
     if id != DEFAULT_PROFILE && !dir.is_dir() {
         return Err(format!("PROFILE_NOT_FOUND: profile {id} does not exist"));
@@ -197,7 +201,9 @@ pub fn remove(app_handle: &AppHandle, id: &str) -> Result<(), String> {
     if id == active_profile(app_handle) {
         return Err("PROFILE_ACTIVE_NOT_REMOVABLE: the active profile cannot be removed".to_string());
     }
-    let dir = profile_dir_of(app_handle, id);
+    // 路径安全：ID 字符集白名单 + 目标必须位于 profiles 根目录内（防 `..` 穿越）
+    let profiles_root = config::get_dsh_data_path(app_handle).join("profiles");
+    let dir = fs_guard::safe_remove_target(&profiles_root, id)?;
     if !dir.is_dir() {
         return Err(format!("PROFILE_NOT_FOUND: profile {id} does not exist"));
     }
@@ -309,5 +315,33 @@ mod tests {
         assert_eq!(npmrc, npmrc2);
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 路径穿越回归：`..`、`.`、绝对路径、含分隔符的 id 一律在 remove 前被拦截，
+    /// 绝不进入 `remove_dir_all`（防 `remove_profile("..")` 删到 $DSH_HOME 本级）。
+    #[test]
+    fn remove_rejects_path_traversal_ids() {
+        for bad in ["..", ".", "../x", "/etc", "a/b", "..\\x", "a\\b"] {
+            assert!(
+                fs_guard::validate_id(bad).is_err(),
+                "id {bad:?} 必须被字符集白名单拦截"
+            );
+        }
+        for good in ["web", "my-profile", "dsh-1.2.3"] {
+            assert!(fs_guard::validate_id(good).is_ok(), "id {good:?} 应合法");
+        }
+        // safe_remove_target 对不存在目标拒绝（不触发删除）
+        let tmp = std::env::temp_dir().join(format!("dsh-profile-guard-{}", std::process::id()));
+        let root = tmp.join("profiles");
+        std::fs::create_dir_all(&root).unwrap();
+        let res = std::panic::catch_unwind(|| {
+            std::fs::create_dir_all(&root.join("web")).unwrap();
+            let ok = crate::service::fs_guard::safe_remove_target(&root, "web");
+            assert!(ok.is_ok(), "存在的合法目录应通过守卫: {ok:?}");
+            let bad = crate::service::fs_guard::safe_remove_target(&root, "..");
+            assert!(bad.is_err(), "`..` 必须被拒绝");
+        });
+        let _ = std::fs::remove_dir_all(&tmp);
+        assert!(res.is_ok(), "test panicked: {res:?}");
     }
 }

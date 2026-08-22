@@ -46,7 +46,12 @@ pub async fn copy_service_url(app_handle: AppHandle) -> Result<(), String> {
 
 /// 在系统文件管理器中定位指定文件（Session 日志下载完成后的"在文件夹中显示"）
 #[tauri::command]
-pub fn reveal_in_folder(path: String) -> Result<(), String> {
+pub fn reveal_in_folder(app_handle: AppHandle, path: String) -> Result<(), String> {
+    // 安全边界：只允许定位允许根目录（下载目录/数据目录/$DSH_HOME）内的文件，
+    // 防止第三方插件通过 IPC 驱动宿主打开任意路径。
+    if !crate::bridge::guard::is_allowed_path(&app_handle, std::path::Path::new(&path)) {
+        return Err(format!("REVEAL_PATH_REJECTED: {path}"));
+    }
     tauri_plugin_opener::reveal_item_in_dir(&path)
         .map_err(|e| format!("REVEAL_FAILED: {e}"))
 }
@@ -54,7 +59,11 @@ pub fn reveal_in_folder(path: String) -> Result<(), String> {
 /// 在系统文件管理器中打开指定目录（核心版本「打开目录」按钮；目录用 open 而非
 /// reveal——reveal 是定位父目录，open 是直接打开该目录本身）。
 #[tauri::command]
-pub fn open_dir(path: String) -> Result<(), String> {
+pub fn open_dir(app_handle: AppHandle, path: String) -> Result<(), String> {
+    // 安全边界同 reveal_in_folder：仅允许打开允许根目录内的目录
+    if !crate::bridge::guard::is_allowed_path(&app_handle, std::path::Path::new(&path)) {
+        return Err(format!("OPEN_DIR_REJECTED: {path}"));
+    }
     tauri_plugin_opener::open_path(&path, None::<&str>)
         .map_err(|e| format!("OPEN_DIR_FAILED: {e}"))
 }

@@ -19,6 +19,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::config;
+use crate::service::download::verify_sha256;
 
 /// 仓库主页（同时用于构造 atom / expanded_assets / 下载地址）
 const REPO_URL: &str = "https://github.com/hairyf/deepseek-harness-desktop";
@@ -28,6 +29,8 @@ const COPYRIGHT: &str = "Copyright © 2026 Deepseek Harness Desktop contributors
 const POWERED_BY: &str = "DeepSeek Harness";
 /// AppData 下安装包存放目录名
 const UPDATES_DIR: &str = "updates";
+/// 安装包下载总时长上限（秒）：超过即视为失败，防止 ghfast.top 等慢源拖死界面
+const DOWNLOAD_TIMEOUT_SECS: u64 = 120;
 
 /// 最新可用发布信息（仅在有更新且匹配到当前平台安装包时才有意义）
 #[derive(Debug, Clone)]
@@ -37,6 +40,10 @@ struct LatestRelease {
     published_at: String,
     url: String,
     asset_name: String,
+    /// release 资产页（expanded_assets）中作者填写的 SHA-256 摘要
+    /// （`sha256:<64hex>`）。`None` 表示无法取得可信摘要——此时镜像源
+    /// 不可用作下载（无完整性凭据），仅官方直连可按旧行为继续。
+    digest: Option<String>,
 }
 
 /// 当前桌面端版本号（来自 Cargo.toml / tauri.conf.json）
@@ -181,10 +188,34 @@ fn extract_asset_names(html: &str, tag: &str) -> Vec<String> {
     names
 }
 
-/// 从 release 的 expanded_assets 页面解析全部安装包资产文件名。
+/// 从 expanded_assets HTML 片段中解析指定资产文件名后的 `sha256:<64hex>` 摘要。
 ///
-/// 不走 api.github.com，故不受未认证限流约束。
-async fn fetch_asset_names(tag: &str) -> Result<Vec<String>, String> {
+/// 与 `download::core` 中 dsh 包的解析算法保持一致（非签名，仅页面元数据兜底，
+/// 不能替代独立信任根）；解析失败/缺失返回 `None`。
+fn parse_digest_from_expanded_assets(body: &str, expected_name: &str) -> Option<String> {
+    let pos = body.find(expected_name)?;
+    // 4096 字节窗口的终点回退到 UTF-8 字符边界，避免切片落在多字节字符中间 panic
+    let mut end = (pos + 4096).min(body.len());
+    while end > pos && !body.is_char_boundary(end) {
+        end -= 1;
+    }
+    let window = &body[pos..end];
+    const START: &str = "sha256:";
+    let hash_start = window.find(START)?;
+    let hash = &window[hash_start + START.len()..];
+    let hex_end = hash
+        .find(|c: char| !c.is_ascii_hexdigit())
+        .unwrap_or(hash.len());
+    if hex_end != 64 {
+        return None;
+    }
+    Some(format!("sha256:{}", &hash[..64]))
+}
+
+/// 一次性拉取 expanded_assets 页面，同时提取资产名列表与该 release 的摘要哈希映射。
+///
+/// 返回值：(资产名列表, 任一资产名的摘要，若存在)。
+async fn fetch_expanded_assets(tag: &str) -> Result<(Vec<String>, Option<String>), String> {
     let body = http_client()?
         .get(format!("{REPO_URL}/releases/expanded_assets/{tag}"))
         .send()
@@ -195,7 +226,17 @@ async fn fetch_asset_names(tag: &str) -> Result<Vec<String>, String> {
         .text()
         .await
         .map_err(|e| format!("UPDATE_ASSETS: {e}"))?;
-    Ok(extract_asset_names(&body, tag))
+    let names = extract_asset_names(&body, tag);
+    let digest = digest_for(&body, &names);
+    Ok((names, digest))
+}
+
+/// 从 expanded_assets 页面中，为「任一资产名」解析 SHA-256 摘要。
+/// 传入资产名列表，返回其中任一资产的摘要（release 通常只有目标平台一个安装包）。
+fn digest_for(body: &str, names: &[String]) -> Option<String> {
+    names
+        .iter()
+        .find_map(|name| parse_digest_from_expanded_assets(body, name))
 }
 
 /// 查询最新 Release（无缓存，每次实时检查，走 HTML/atom 而非 api.github.com）。
@@ -209,10 +250,19 @@ async fn fetch_latest_release() -> Result<Option<LatestRelease>, String> {
         return Ok(None);
     }
 
-    let names = fetch_asset_names(&tag).await?;
+    // 一次拉取 expanded_assets 页面，同时得到资产名与摘要（避免两次请求）
+    let (names, digest) = fetch_expanded_assets(&tag).await?;
     let Some(asset_name) = pick_asset(&names) else {
         return Ok(None);
     };
+
+    // 摘要缺失不阻断：官方直连仍可按旧行为下载（兼容早期未填摘要的发布），
+    // 但镜像兜底需要可信摘要（见 `download`）防止投毒。
+    log::debug!(
+        "Release {tag} digest for picked asset {}: {}",
+        asset_name,
+        digest.as_deref().map(|d| &d[..12]).unwrap_or("<none>")
+    );
 
     // 下载地址由 tag + 资产名直接构造，无需 API
     let url = format!("{REPO_URL}/releases/download/{tag}/{asset_name}");
@@ -222,6 +272,7 @@ async fn fetch_latest_release() -> Result<Option<LatestRelease>, String> {
         published_at,
         url,
         asset_name,
+        digest,
     }))
 }
 
@@ -330,13 +381,38 @@ async fn download_from_source(
     Ok(())
 }
 
+/// 安装包下载客户端：长超时（安装包可达数百 MB，慢镜像需要更久），
+/// 与检查更新用的 5s `http_client()` 区分。
+fn download_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .user_agent("deepseek-harness-desktop")
+        .timeout(Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
+        .connect_timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("UPDATE_CLIENT: {e}"))
+}
+
+/// 组装安装包下载源列表：官方 GitHub 直连 + （存在可信摘要时）ghfast.top 镜像。
+///
+/// 安全策略：第三方镜像没有独立信任根，仅在其内容可被 SHA-256 校验（摘要已取得）
+/// 时才提供兜底；否则只允许官方直连，宁可在官方不可用时失败，也不冒投毒风险。
+fn download_sources(release: &LatestRelease) -> Vec<String> {
+    let mut urls = vec![release.url.clone()];
+    if release.digest.is_some() {
+        urls.push(config::mirror_download_url(&release.url));
+    }
+    urls
+}
+
 /// 下载桌面端安装包；已下载则直接返回。
 ///
 /// 下载期间通过 `desktop-update-progress` 事件推送进度；完成后返回
 /// `DesktopUpdateInfo`（path/downloaded 已更新）。
 ///
-/// 下载源策略与 dsh 核心一致：默认先走 GitHub 官方直连，失败自动切换
-/// ghfast.top 镜像兜底；切换时通过进度事件的 message 字段在界面上告知用户。
+/// 下载源策略：先取 `expanded_assets` 页面的 SHA-256 摘要作为完整性凭据，再
+/// 选择下载源——**镜像兜底（ghfast.top）仅在已取得可信摘要时才可使用**，否则
+/// 宁可失败，防止第三方镜像投毒未被察觉；官方 GitHub 直连在摘要缺失时仍可
+/// 按旧行为下载（兼容早期未填摘要的发布），下载后若有摘要则强制校验。
 pub async fn download(app_handle: &AppHandle) -> Result<DesktopUpdateInfo, String> {
     let release = fetch_latest_release()
         .await?
@@ -350,21 +426,23 @@ pub async fn download(app_handle: &AppHandle) -> Result<DesktopUpdateInfo, Strin
             .ok_or_else(|| "UPDATE_NONE".to_string());
     }
 
-    let client = reqwest::Client::builder()
-        .user_agent("deepseek-harness-desktop")
-        .build()
-        .map_err(|e| format!("UPDATE_CLIENT: {e}"))?;
+    let client = download_client()?;
 
-    // 官方直连 → ghfast.top 镜像兜底。安装包无 SHA-256 元数据，切换源时
+    // 官方直连 → （可选）ghfast.top 镜像兜底。安装包无 SHA-256 元数据，切换源时
     // 丢弃上一源的部分字节从头下载，避免混用两个源的字节流。
-    let urls = vec![
-        release.url.clone(),
-        config::mirror_download_url(&release.url),
-    ];
+    // 安全策略：镜像兜底要求已有可信摘要，否则不提供镜像（宁可失败）。
+    let urls = download_sources(&release);
+    if urls.len() == 1 {
+        log::warn!(
+            "No SHA-256 digest available for {}, mirror fallback disabled",
+            release.asset_name
+        );
+    }
     let tmp = path.with_extension("part");
     let mut last_err = String::new();
     for (index, url) in urls.iter().enumerate() {
         if index > 0 {
+            // 走镜像仅在存在可信摘要时发生（见上方 urls 组装）
             let host = reqwest::Url::parse(url)
                 .ok()
                 .and_then(|parsed| parsed.host_str().map(|h| h.to_string()))
@@ -399,6 +477,18 @@ pub async fn download(app_handle: &AppHandle) -> Result<DesktopUpdateInfo, Strin
             urls.len()
         ));
     }
+
+    // 完整性校验：摘要存在（镜像路径必有）则强制校验，校验失败即拒绝，
+    // 不保留为可安装文件，也不能被 open_installer 打开。
+    if let Some(digest) = &release.digest {
+        let bytes = std::fs::read(&tmp).map_err(|e| format!("UPDATE_FILE: {e}"))?;
+        if let Err(e) = verify_sha256(&bytes, digest) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(format!("UPDATE_DOWNLOAD: {e}"));
+        }
+        log::info!("Installer SHA-256 verified for {}", release.asset_name);
+    }
+
     std::fs::rename(&tmp, &path).map_err(|e| format!("UPDATE_FILE: {e}"))?;
 
     check(app_handle)
@@ -407,10 +497,32 @@ pub async fn download(app_handle: &AppHandle) -> Result<DesktopUpdateInfo, Strin
 }
 
 /// 打开安装包：交给系统默认处理器（Windows 会触发 UAC 执行安装器）。
+///
+/// 安全边界：仅允许打开 `AppData/updates/` 目录内、且文件名与资产名一致的
+/// 安装包——任意路径、绝对/相对遍历、`..` 都会拒绝，避免被伪装的 frame 或
+/// 插件利用去执行任意文件。
 pub async fn open_installer(app_handle: &AppHandle, path: String) -> Result<(), String> {
+    let updates_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("UPDATE_DIR: {e}"))?
+        .join(UPDATES_DIR);
     let p = std::path::Path::new(&path);
-    if !p.exists() {
+    if !p.exists() || !p.is_file() {
         return Err(format!("UPDATE_NOT_FOUND: {path}"));
+    }
+    // 规范化后必须仍在 updates 目录内（防 `..`、符号链接、路径穿越）
+    let canonical = p.canonicalize().map_err(|e| format!("UPDATE_OPEN: {e}"))?;
+    let updates_real = updates_dir
+        .canonicalize()
+        .map_err(|e| format!("UPDATE_DIR: {e}"))?;
+    if !canonical.starts_with(&updates_real) {
+        log::error!(
+            "Rejecting open_installer outside updates dir: {} (root {})",
+            canonical.display(),
+            updates_real.display()
+        );
+        return Err("UPDATE_PATH_REJECTED: installer path is outside updates directory".to_string());
     }
     log::info!("Opening desktop installer: {}", p.display());
     app_handle
@@ -559,5 +671,56 @@ mod tests {
         assert_eq!(names, vec!["x64-setup.exe", "x64_en-US.msi"]);
         assert!(extract_asset_names(html, "v9.9.9").is_empty());
         assert!(extract_asset_names("", tag).is_empty());
+    }
+
+    /// 摘要解析回归：识别 `sha256:<64hex>`（含中文/多字节前缀），拒绝非法摘要。
+    #[test]
+    fn parse_digest_from_expanded_assets_extracts_sha256() {
+        let hex = format!("sha256:{}", "a".repeat(64));
+        let html = format!(
+            r#"<td>设置包</td><td class="d-block">app.dmg</td><td>下载</td><td>{hex}</td>"#
+        );
+        let digest = parse_digest_from_expanded_assets(&html, "app.dmg");
+        let expected = format!("sha256:{}", "a".repeat(64));
+        assert_eq!(digest.as_deref(), Some(expected.as_str()));
+
+        // 无匹配资产 → None
+        assert!(parse_digest_from_expanded_assets(&html, "app-x86_64.dmg").is_none());
+        // 摘要长度/字符不合法 → None
+        let bad = r#"<td>app.dmg sha256:zz"#;
+        assert!(parse_digest_from_expanded_assets(bad, "app.dmg").is_none());
+        // 多字节内容前移后仍能解析（切片边界安全）
+        let unicode = format!(
+            "中文说明app.dmg{}更多内容",
+            hex
+        );
+        assert!(parse_digest_from_expanded_assets(&unicode, "app.dmg").is_some());
+    }
+
+    /// 镜像兜底策略回归：无摘要时只有官方源；有摘要时才加入镜像。
+    #[test]
+    fn download_sources_only_mirrors_with_digest() {
+        let url = "https://github.com/x/y/releases/download/v0.7.4/x.dmg";
+        let base = LatestRelease {
+            version: "0.7.4".into(),
+            tag: "v0.7.4".into(),
+            published_at: String::new(),
+            url: url.into(),
+            asset_name: "x.dmg".into(),
+            digest: None,
+        };
+        // 无摘要 → 仅官方直连
+        let without = download_sources(&base);
+        assert_eq!(without.len(), 1);
+        assert_eq!(without[0], url);
+        // 有摘要 → 官方 + 镜像
+        let with_digest = LatestRelease {
+            digest: Some(format!("sha256:{}", "b".repeat(64))),
+            ..base.clone()
+        };
+        let sources = download_sources(&with_digest);
+        assert_eq!(sources.len(), 2);
+        assert!(sources[1].contains("ghfast.top"), "镜像应为 ghfast.top 前缀: {}", sources[1]);
+        assert!(sources[1].ends_with("/releases/download/v0.7.4/x.dmg"), "镜像保留完整资产路径: {}", sources[1]);
     }
 }

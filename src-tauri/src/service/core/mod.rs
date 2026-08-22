@@ -15,7 +15,7 @@
 //! 不触碰用户安装本身之外的文件。
 
 use crate::config;
-use crate::service::{cli, download, workflow};
+use crate::service::{cli, download, fs_guard, workflow};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -510,6 +510,8 @@ async fn switch_app_version(app_handle: &AppHandle, tag: &str) -> Result<(), Str
 /// 下载指定 tag 的预打包核心到历史槽位 `dependencies/<tag>`（不激活，切换由
 /// `set_active` 完成）。幂等：已下载时直接返回该版本行。
 pub async fn download_version(app_handle: &AppHandle, tag: &str) -> Result<HarnessCore, String> {
+    // 路径安全：tag 直接进入 `dependencies/<tag>` 槽位路径，需挡 `..`/分隔符
+    fs_guard::validate_id(tag)?;
     let dest = slot_dir(app_handle, tag);
     if dest.exists() {
         return Ok(row_for_tag(app_handle, tag, &dest));
@@ -562,6 +564,9 @@ pub async fn remove_version(app_handle: &AppHandle, id: &str) -> Result<(), Stri
     let Some(tag) = id.strip_prefix("app-") else {
         return Err(format!("CORE_INVALID_ID: {id}"));
     };
+    // 路径安全：tag 需通过字符集白名单（tag 形如 `dsh-0.1.0-rc.8-<commit>`），
+    // 拒绝 `..`、分隔符等，防止 `remove_core("app-..")` 把目标推出依赖根目录。
+    fs_guard::validate_id(tag)?;
     let cur_tag = config::get_dsh_pkg_tag(app_handle);
     if cur_tag.as_deref() == Some(tag) && active_source(app_handle) == CoreSource::App {
         return Err(format!("CORE_ACTIVE_VERSION: cannot remove in-use version {tag}"));

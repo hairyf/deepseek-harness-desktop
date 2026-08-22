@@ -41,6 +41,11 @@ fn is_package_name(s: &str) -> bool {
     if s.is_empty() || s.contains(':') || s.chars().any(|c| c.is_whitespace()) {
         return false;
     }
+    // 路径穿越防护：`.` 与 `..` 虽由字符集放行（包名允许点），但单独出现
+    // 或作为路径片段时会被 `Path::join` 解析为上级目录——必须显式拒绝。
+    if s == "." || s == ".." || s.starts_with("..") || s.ends_with('/') || s.ends_with("..") {
+        return false;
+    }
     let body = s.strip_prefix('@').unwrap_or(s);
     // scoped 必须带 `/`（@scope/name）
     if s.starts_with('@') && !body.contains('/') {

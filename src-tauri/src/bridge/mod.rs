@@ -7,6 +7,7 @@
 pub mod app_config;
 pub mod clipboard;
 pub mod core;
+pub mod guard;
 pub mod lifecycle;
 pub mod plugin;
 pub mod profile;
