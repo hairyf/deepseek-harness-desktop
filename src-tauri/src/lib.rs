@@ -7,6 +7,19 @@ mod service;
 mod task;
 
 pub fn run() {
+    // Wayland EGL workaround: AppImage bundles WebKitGTK may fail with
+    // "Could not create default EGL display: EGL_BAD_PARAMETER" on Wayland
+    // compositors (PikaOS/GNOME Wayland, Ubuntu 22.04+). Host WebKit (deb)
+    // works, but AppImage needs compositing disabled. Auto-set when on Wayland
+    // if user hasn't already set it — fixes hairyf#??? (PikaOS report).
+    if std::env::var("XDG_SESSION_TYPE").unwrap_or_default() == "wayland" {
+        if std::env::var("WEBKIT_DISABLE_COMPOSITING_MODE").is_err()
+            && std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err()
+        {
+            std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+            eprintln!("[wayland] set WEBKIT_DISABLE_COMPOSITING_MODE=1 for WebKitGTK EGL");
+        }
+    }
     // 初始化日志系统
     logger::init();
 

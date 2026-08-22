@@ -64,6 +64,8 @@
 
 **系统要求：** Windows 10+（64 位）· macOS 10.15+ · Linux（AppImage / `.deb`，基于 Ubuntu 22.04 构建，兼容 22.04 及更新版本）· 首次运行需要网络
 
+> **Linux Wayland 注意（PikaOS / GNOME Wayland / Ubuntu 22.04+）：** AppImage 捆绑的 WebKitGTK 4.1 在 Wayland 下可能报 `Could not create default EGL display: EGL_BAD_PARAMETER` + `g_task_set_static_name`（宿主 `gvfs`/`glib` 版本与 AppImage 内 bundled 不一致）。已在 `v0.7.6` 自动 workaround（`XDG_SESSION_TYPE=wayland` 时 `WEBKIT_DISABLE_COMPOSITING_MODE=1`）。若仍黑屏/崩溃：**推荐 `.deb`**（使用宿主 `libwebkit2gtk-4.1.so.0`，已验证 PikaOS 4 Wayland），或手动 `WEBKIT_DISABLE_COMPOSITING_MODE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 GDK_BACKEND=x11 ./AppImage`。图标若不显示：`cp` 应用内 `hicolor` 图标到 `~/.local/share/icons` 并 `update-desktop-database`。
+
 ## 开发
 
 想参与开发？参见 [docs/DEVELOPMENT.zh.md](./docs/DEVELOPMENT.zh.md)。
