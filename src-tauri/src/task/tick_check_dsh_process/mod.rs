@@ -23,5 +23,13 @@ pub async fn trigger(app_handle: AppHandle) -> Result<(), Box<dyn std::error::Er
         status::emit_status(&app_handle);
     }
 
+    // 反向回收：不再持有 dsh 进程（退出监视线程可能因崩溃等未复位）而状态仍
+    // 停在 Running 时兜底回落 Stopped，避免前端长期显示错误的「运行中」。
+    if !crate::service::workflow::has_owned_process() && current_status == Status::Running {
+        log::warn!("DSH status check: no owned process yet status Running; resetting to Stopped");
+        status::set_status(Status::Stopped);
+        status::emit_status(&app_handle);
+    }
+
     Ok(())
 }

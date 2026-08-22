@@ -596,6 +596,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn cmd_shim_contains_baked_paths() {
         let content = build_cmd_shim(&sample_app_dir(), &sample_dsh_home());
         assert!(content.contains(r"C:\Users\test\AppData\Roaming"));
@@ -653,6 +654,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn ps1_shim_escapes_quotes() {
         let dir = PathBuf::from(r"C:\Users\o'brien\AppData\Roaming\io.github.hairyf.deepseek-harness-desktop");
         let content = build_ps1_shim(&dir, &sample_dsh_home());

@@ -45,14 +45,14 @@ mod imp {
 
     /// cordis.patch.yml 追加的挂载行（顶层数组的一个 `- insert:` 元素）。
     ///
-    /// name 必须用相对 profile 目录的路径（`./node_modules/...`），不能用裸包名：
+    /// name 用相对 profile 目录的路径（`./node_modules/...`），不用裸包名：
     /// dsh loader 对 profile patch 条目的模块解析以 harness 安装为 baseUrl，
     /// 裸插件名无法可靠解析；而相对路径经 `new URL(name, baseUrl)` 基于 profile
     /// 目录解析，稳定指向 `dsh plugin add` 装入的 node_modules。
     const PATCH_ENTRY: &str = concat!(
         "- insert:\n",
         "    - id: win-terminal-inspector\n",
-        "      name: dsh-win-terminal-inspector\n",
+        "      name: ./node_modules/dsh-win-terminal-inspector\n",
     );
 
     /// 注入判定标记：patch 中出现该字符串即视为已挂载。
@@ -557,7 +557,18 @@ mod imp {
             std::fs::create_dir_all(&dir).unwrap();
             ensure_patch(&dir).unwrap();
             let out = std::fs::read_to_string(dir.join("cordis.patch.yml")).unwrap();
-            assert!(out.contains("dsh-win-terminal-inspector"));
+            // 必须是 `name: ./node_modules/dsh-win-terminal-inspector`（相对 profile
+            // 目录路径）。裸包名（`name: dsh-win-terminal-inspector`）无法被 dsh
+            // loader 按 harness baseUrl 可靠解析，是历史实现的注释-实现矛盾处。
+            assert!(
+                out.contains("name: ./node_modules/dsh-win-terminal-inspector"),
+                "patch must mount via profile-relative path, got:\n{out}"
+            );
+            // 单独断言不含裸包名写法（`name: dsh-win-terminal-inspector` 后直接换行）
+            assert!(
+                !out.contains("name: dsh-win-terminal-inspector\n"),
+                "patch must not use bare package name, got:\n{out}"
+            );
             std::fs::remove_dir_all(&dir).ok();
         }
 

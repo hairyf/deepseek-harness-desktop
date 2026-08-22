@@ -135,6 +135,16 @@ async fn download_with_retry<'a, R: Runtime>(
     ))
 }
 
+/// 下载进度百分比（0.0–100.0）；总长未知（0）时返回 -1 表示「不确定进度」，
+/// 避免除零产生 +inf/NaN 污染前端进度条。
+fn download_progress_percent(received_total: u64, total_size: u64) -> f64 {
+    if total_size > 0 {
+        (received_total as f64 / total_size as f64) * 100.0
+    } else {
+        -1.0
+    }
+}
+
 /// 单次下载尝试：发起 GET 请求并把响应体流式读入 `buffer`。
 ///
 /// 已有部分数据时自动带 `Range: bytes=<已有>-` 续传；服务端返回 200（不支持
@@ -204,7 +214,9 @@ async fn download_attempt<'a, R: Runtime>(
         buffer.extend_from_slice(&chunk);
         downloaded += chunk.len() as u64;
         let received_total = resume_from + downloaded;
-        let progress_pct = (received_total as f64 / total_size as f64) * 100.0;
+        // 未知总长（服务器未给 Content-Length/分块传输）时进度取 -1，
+        // 避免 `received / 0 = +inf` 或 NaN 进度传给前端
+        let progress_pct = download_progress_percent(received_total, total_size);
         tracker.update(
             progress_pct,
             format!(
@@ -994,6 +1006,21 @@ pub async fn fetch_dsh_pkg_tags() -> Result<Vec<(String, String)>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn progress_percent_never_emits_nan_or_inf() {
+        // 总长已知：常规百分比
+        assert_eq!(download_progress_percent(50, 100), 50.0);
+        assert_eq!(download_progress_percent(0, 100), 0.0);
+        // 总长未知（0）：返回 -1 而非 inf/NaN（除零保护）
+        assert_eq!(download_progress_percent(50, 0), -1.0);
+        // 尚未开始且总长未知也不产生 NaN
+        assert_eq!(download_progress_percent(0, 0), -1.0);
+        // 数值绝对不出现非有限值
+        for pct in [download_progress_percent(50, 0), download_progress_percent(0, 0)] {
+            assert!(pct.is_finite(), "progress must be finite, got {pct}");
+        }
+    }
 
     #[test]
     fn sha256_verification_accepts_only_matching_digest() {
