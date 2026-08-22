@@ -231,6 +231,6 @@ export function useIframeShim(iframeRef: RefObject<HTMLIFrameElement | null>) {
   // eslint-disable-next-line react/exhaustive-deps
   }, [])
 
-  // 兜底轮询：覆盖监听不到的状态变化（如任务栏切换）
-  useInterval(syncVisibility, 1000)
+  // 兜底轮询：覆盖监听不到的状态变化（如任务栏切换）；主路径是文档可见性事件，5s 足够
+  useInterval(syncVisibility, 5000)
 }

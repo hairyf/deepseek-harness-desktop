@@ -1,6 +1,6 @@
 # Development Specification Document
 
-DeepSeek Harness desktop (Tauri 2 + React 18), embeds the Harness UI served at `http://127.0.0.1:3080`.
+DeepSeek Harness desktop (Tauri 2 + React 19), embeds the Harness UI served at `http://127.0.0.1:3080`.
 
 - **端口隔离**：release 默认 `3080`，debug（`pnpm tauri dev` / `cargo build`）默认 `3081`，由 `config::setting::default_port()` 用 `cfg!(debug_assertions)` 区分，避免开发时与已运行的桌面端争用端口。
 - **数据隔离（核心共用、数据不共用）**：node/`dependencies/dsh`/`dependencies/pnpm` 为共用核心（AppData）；debug 构建的 `$DSH_HOME` 默认为 `~/.dsh.dev`（`config::runtime::get_dsh_data_path` 用 `cfg!(debug_assertions)` 区分）且 store 用独立文件 `.store.dev.dat`（`config::setting::store_dat_file_name`），避免开发版与生产版会话/档案/端口状态互相污染，也防止 dev 版热重启把 release 的服务进程杀掉（`service/workflow::terminate_stale_harness_processes` 在 debug 下为 no-op，改由 `.dsh.dev/.harness.pid` 精确回收）。debug 构建不迁移旧数据（`service/migrate`）、不注册/注销 PATH、不写烘焙 DSH_HOME 的 `dsh` shim（`service/cli`）。
@@ -10,13 +10,13 @@ DeepSeek Harness desktop (Tauri 2 + React 18), embeds the Harness UI served at `
 - This will help minimize the need for writing custom classes.
 - If you write new content, you need to handle i18n en keys
 - i18n keys must be flat (no nesting), use dot-notation flat keys only
-- No hardcoded strings; sync `src/i18n/zh.ts`, `en.ts` and `types.ts`
+- No hardcoded strings; sync i18n locale files (`src/i18n/locales/en-US.json` / `zh-CN.json`)
 - If the component you write/modify is too complex, you need to split it into multiple components
 - Repeated logic should be encapsulated into methods/components
 
 ## Tech Stack
 
-- **Frontend**: React 18 + TS + Tailwind 4 (no plain CSS), Vite (`src/`)
+- **Frontend**: React 19 + TS + Tailwind 4 (no plain CSS), Vite (`src/`)
 - **Backend**: Rust / Tauri 2 (`src-tauri/src/`)
   - `bridge/cmd.rs`: Tauri commands (register in `lib.rs` `generate_handler!`)
   - `config/`: constants, paths (`runtime.rs`), settings (`setting.rs`), i18n & theme
@@ -36,7 +36,7 @@ cargo check && cargo test   # Rust check & unit tests (run in src-tauri)
 
 ## Basics
 
-- No `useCallback` / `useMemo` — project has `react-compiler` built in
+- No `useCallback` / `useMemo` — `react-compiler` 已通过 Vite 接入（`babel-plugin-react-compiler`，target 19）用于自动记忆化；但禁用手动记忆化钩子仍是「组件保持轻量」的项目约定（每次渲染重建 inline 函数可接受），而非依赖编译器记忆化
 - Component functions use `function` declaration; inline events/callbacks use arrow functions
 
 ## Function Declaration Specification
@@ -77,6 +77,10 @@ function MyPage() {
 ```
 
 ### Create files in services directory
+
+> 注：本仓库当前**没有** `src/services/` 目录，也没有 `@/apis` API 层（数据访问
+> 统一走 Tauri `invoke('command')`）。以下为该模板的用意说明；如未来引入 REST
+> API 层再按此惯例建目录。
 
 **Use case:** Backend type error handling, parameter processing, composite requests, polling, data caching, etc.
 
@@ -123,26 +127,11 @@ Use `If`, `Then`, `Else` components by `react-if-lite` package instead of ternar
 
 ## State Management Specification
 
-### Single module page shared data: defineScope + useScope
+### Single module page shared data: defineScope + useScope（已弃用）
 
-```tsx
-// 1. Create scope
-export const TradingScope = defineScope(() => {
-  const [count, setCount] = useState(0);
-  // any hooks or functions
-  return { count, setCount }; 
-});
-
-// 2. Use Provider
-<TradingScope.Provider>
-  <Page> {/* or ({ count }) => <Page>...</Page> */}
-    <TradingTable />
-  </Page>
-</TradingScope.Provider>;
-
-// 3. Use in child components
-const { filters, setFilters } = useScope(TradingScope);
-```
+> `defineScope`/`useScope`（src/hooks/define-scope.ts、use-scope.ts）已在仓库中删除，
+> 全项目改用 `defineStore + useStore`（见下）。新代码一律使用 store 模块，勿再引入
+> scope 模式。
 
 ### Multiple module pages shared data: defineStore
 
@@ -259,8 +248,8 @@ export function FooComponent(props: FooProps) {
 
 ## Summary
 
-- **API Import**: Import APIs from `@/apis`, types from `@/apis/index.type`
+- **API Import**: 直接 `import { invoke } from '@tauri-apps/api/core'`（本仓库没有 `@/apis` 层）；类型就近定义在 hooks/组件文件中
 - **Function Declaration**: Use `function`, not arrow functions
 - **Conditional Rendering**: Use `If`, `Then`, `Else` components instead of ternary operators and `&&` operators
 - **Data Processing**: Simple scenarios use `useQuery`/`useMutation` directly, complex scenarios create service files
-- **State Management**: Single module use `defineScope + useScope`, multiple modules use `defineStore + useStore`
+- **State Management**: Multi-module shared state uses `defineStore + useStore`（valtio-define）；`defineScope`/`useScope` 已弃用（无引用），新代码勿用

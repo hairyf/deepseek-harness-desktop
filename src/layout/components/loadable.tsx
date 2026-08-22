@@ -1,5 +1,6 @@
 import type { ComponentType, ReactNode, SVGProps } from 'react'
 import { useTranslation } from 'react-i18next'
+import { If } from 'react-if-lite'
 import { PanelProgress } from '@/components/panel-progress'
 import { button } from '@/components/primitives'
 
@@ -58,36 +59,40 @@ export function Loadable({
     <div className="flex h-full items-center justify-center bg-load-bg -mt-[1px]">
       <div className="flex w-[min(460px,88vw)] flex-col items-center gap-4 text-center">
         {/* 加载态显示 spinner 时隐藏图标（官方 boot 页即无图标），避免与 spinner 重复突兀；仅失败态显示 */}
-        {error && Icon && <Icon className="size-7 text-load-ink" />}
+        {/* 加载态显示 spinner 时隐藏图标（官方 boot 页即无图标），避免与 spinner 重复突兀；仅失败态显示 */}
+        <If cond={error && Icon != null}>
+          {Icon != null && <Icon className="size-7 text-load-ink" />}
+        </If>
 
         <span className="text-base leading-6 font-semibold tracking-[0.08em] text-load-ink truncate">{wordmark}</span>
 
-        {error
-          ? (
-              // 失败态：官方 failed 展示样式（代码字体错误信息）
-              <p className="min-h-[18px] max-w-full font-mono text-xs leading-[18px] break-all text-load-muted">{hint}</p>
-            )
-          : (
-              <>
-                <span className="h-5 w-5 animate-load-spin rounded-full border-2 border-load-ring border-t-load-ink" />
-                <p className="min-h-[18px] text-xs leading-[18px] break-all text-load-muted">{hint}</p>
-              </>
-            )}
+        <If
+          cond={error}
+          else={(
+            <>
+              <span className="h-5 w-5 animate-load-spin rounded-full border-2 border-load-ring border-t-load-ink" />
+              <p className="min-h-[18px] text-xs leading-[18px] break-all text-load-muted">{hint}</p>
+            </>
+          )}
+        >
+          {/* 失败态：官方 failed 展示样式（代码字体错误信息） */}
+          <p className="min-h-[18px] max-w-full font-mono text-xs leading-[18px] break-all text-load-muted">{hint}</p>
+        </If>
 
-        {onRetry && (
+        <If cond={onRetry != null}>
           <button
             className={button({ tone: 'primary' })}
             onClick={onRetry}
           >
             {t('app.retry')}
           </button>
-        )}
+        </If>
 
-        {showPanel && (
+        <If cond={showPanel}>
           <div className="flex w-full flex-col gap-4">
-            <PanelProgress percentage={percentage} logs={hasLogs ? logs! : undefined} />
+            <PanelProgress percentage={percentage} logs={logs} />
           </div>
-        )}
+        </If>
 
         {children}
       </div>

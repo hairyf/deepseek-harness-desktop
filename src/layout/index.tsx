@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { If } from 'react-if-lite'
 import { useStore } from 'valtio-define'
 import { PluginRecovery } from '../components/plugin-recovery'
 import { useDshTheme } from '../hooks/use-dsh-theme'
@@ -59,10 +60,16 @@ export function App() {
   return (
     <div className="flex h-screen w-screen">
       <Webview />
-      {status === 'ready' && <HarnessUpdater />}
-      {status === 'ready' && <DownloadToast />}
+      <If cond={status === 'ready'}>
+        <HarnessUpdater />
+      </If>
+      <If cond={status === 'ready'}>
+        <DownloadToast />
+      </If>
       {/* 运行期插件异常：应用仍在运行，弹醒目对话框（启动崩溃走 webview 的全屏恢复页） */}
-      {status === 'ready' && <PluginRecovery />}
+      <If cond={status === 'ready'}>
+        <PluginRecovery />
+      </If>
       <DesktopUpdater />
     </div>
   )

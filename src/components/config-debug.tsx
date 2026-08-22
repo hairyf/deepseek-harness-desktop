@@ -201,7 +201,7 @@ export function ConfigDebug() {
 
           </Info>
           <Info term={t('ui.node_version')}>{info?.node_version ? `v${info.node_version}` : '-'}</Info>
-          <Info term="Platform">
+          <Info term={t('ui.platform')}>
             {info ? `${info.platform} / ${info.arch}` : '-'}
           </Info>
           <div className="flex items-center justify-between gap-2 text-xs">

@@ -16,14 +16,13 @@ import { listen } from '@tauri-apps/api/event'
 import i18next from 'i18next'
 import { defineStore } from 'valtio-define'
 import { queryClient } from '@/config/client'
+import { pickErrorLines } from '@/utils/log-utils'
 import { harnessUpdater } from '../harness-updater'
 
 const MAX_RETRIES = 8
 const IFRAME_LOAD_TIMEOUT = 20000
 /** 启动失败时从服务日志尾部挑选的原始行上限（ANSI 清洗后按行截断） */
 const LOG_TAIL_MAX_BYTES = 16 * 1024
-/** 日志中常见的错误标记，用于失败时挑出真正的问题行而不是整个堆栈 */
-const ERROR_LINE_MARKERS = /error|duplicate|fatal|panic|throw|✖|exception|failed/i
 
 /** 启动失败错误：附带从 dsh 服务日志中读取的真实错误行与可选的冲突提示 */
 interface StartupError extends Error {
@@ -119,12 +118,6 @@ async function readServiceLogTail(): Promise<string[]> {
     console.error('[Harness] failed to read service logs:', err)
     return []
   }
-}
-
-/** 从日志行中挑出真正的错误行（命中错误标记，最多 8 行）；没有命中则退回最后 8 行 */
-function pickErrorLines(lines: string[]): string[] {
-  const errored = lines.filter(line => ERROR_LINE_MARKERS.test(line)).slice(0, 8)
-  return errored.length > 0 ? errored : lines.slice(-8)
 }
 
 /** 失败时把服务日志的真实错误行与冲突提示挂到错误对象上 */
@@ -583,7 +576,7 @@ export const harness = defineStore({
         await invoke('install_preinstall_plugins', { ids })
         // 后端装完已把服务停掉，这里在日志面板讲清接下来的重启（issue #48），
         // 避免用户把"插件安装后的自动重启"误认为崩溃/故障。
-        this.preinstall.logs = [...this.preinstall.logs, '[harness] 正在重启服务，请稍候…'].slice(-200)
+        this.preinstall.logs = [...this.preinstall.logs, i18next.t('preinstall.restarting_hint')].slice(-200)
         await this.continueAfterPreinstall()
       }
       catch (err) {

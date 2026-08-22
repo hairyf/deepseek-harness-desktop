@@ -1,9 +1,11 @@
 import type { PropsWithOverlays } from '@overlastic/react'
-import type { AlertDialogStatus } from 'node_modules/@heroui/react/dist/components/alert-dialog/alert-dialog'
 import type { ReactNode } from 'react'
 import { AlertDialog, Button } from '@heroui/react'
 import { useDisclosure } from '@overlastic/react'
 import { useTranslation } from 'react-i18next'
+
+/** AlertDialog 状态色：库内 AlertDialogStatus 未从子包 re-export，本地保持同步定义 */
+export type AlertDialogStatus = 'default' | 'accent' | 'success' | 'warning' | 'danger'
 
 export interface ModalProps extends PropsWithOverlays {
   status: AlertDialogStatus

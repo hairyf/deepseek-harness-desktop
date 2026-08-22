@@ -77,25 +77,24 @@ export function Webview() {
 
       {/* iframe 区域：加载失败时用覆盖层展示重试（iframe 保持挂载，重试复用） */}
       <div className="relative min-h-0 flex-1">
-        {serviceHealthy
-          ? (
-              <iframe
-                key={iframeKey}
-                ref={iframeRef}
-                className="block h-full w-full border-none bg-load-bg"
-                src={iframeSrc}
-                allow="clipboard-read; clipboard-write; fullscreen"
-                sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals allow-downloads allow-storage-access-by-user-activation"
-                onLoad={store.harness.markIframeLoaded}
-                onError={store.harness.markIframeError}
-                title={t('app.open_editor')}
-              />
-            )
-          : (
-              <Loadable subtitle={t('status.loading')} />
-            )}
+        <If
+          cond={serviceHealthy}
+          else={<Loadable subtitle={t('status.loading')} />}
+        >
+          <iframe
+            key={iframeKey}
+            ref={iframeRef}
+            className="block h-full w-full border-none bg-load-bg"
+            src={iframeSrc}
+            allow="clipboard-read; clipboard-write; fullscreen"
+            sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals allow-downloads allow-storage-access-by-user-activation"
+            onLoad={store.harness.markIframeLoaded}
+            onError={store.harness.markIframeError}
+            title={t('app.open_editor')}
+          />
+        </If>
 
-        {serviceHealthy && iframeError && (
+        <If cond={serviceHealthy && iframeError}>
           <div className="absolute inset-0 z-[1]">
             <Loadable
               icon={CircleExclamation}
@@ -104,7 +103,7 @@ export function Webview() {
               onRetry={store.harness.refreshIframe}
             />
           </div>
-        )}
+        </If>
       </div>
     </main>
   )

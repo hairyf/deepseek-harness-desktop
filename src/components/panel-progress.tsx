@@ -37,7 +37,7 @@ export function PanelProgress({ percentage, logs }: PanelProgressProps) {
         </div>
       )}
       {hasLogs && (
-        <Logs logs={logs!} limit={LOG_LIMIT} bodyClassName="max-h-[184px]" />
+        <Logs logs={logs ?? []} limit={LOG_LIMIT} bodyClassName="max-h-[184px]" />
       )}
     </div>
   )
